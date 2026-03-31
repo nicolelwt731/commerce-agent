@@ -15,15 +15,25 @@ export interface Product {
 
 const catalog: Product[] = catalogData as Product[]
 
+const STOP_WORDS = new Set([
+  'a', 'an', 'the', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for',
+  'of', 'with', 'by', 'from', 'up', 'about', 'into', 'through', 'is',
+  'are', 'was', 'be', 'been', 'have', 'has', 'do', 'does', 'did', 'will',
+  'would', 'could', 'should', 'may', 'might', 'i', 'me', 'my', 'you',
+  'your', 'we', 'our', 'it', 'its', 'this', 'that', 'some', 'give', 'get',
+  'show', 'find', 'recommend', 'suggest', 'want', 'need', 'looking',
+])
+
 /**
  * Tokenise a query string into lowercase words for keyword matching.
+ * Common stop words and short filler words are removed.
  */
 function tokenise(text: string): string[] {
   return text
     .toLowerCase()
     .replace(/[^a-z0-9\s-]/g, '')
     .split(/\s+/)
-    .filter(Boolean)
+    .filter((w) => w.length > 1 && !STOP_WORDS.has(w))
 }
 
 /**
@@ -62,9 +72,11 @@ export function searchByText(query: string, limit = 5): Product[] {
   const tokens = tokenise(query)
   if (tokens.length === 0) return catalog.slice(0, limit)
 
+  // Require a minimum score of 4 (at least one strong name/tag match)
+  const minScore = tokens.length === 1 ? 2 : 4
   const scored = catalog
     .map((product) => ({ product, score: scoreProduct(product, tokens) }))
-    .filter(({ score }) => score > 0)
+    .filter(({ score }) => score >= minScore)
     .sort((a, b) => b.score - a.score)
 
   return scored.slice(0, limit).map(({ product }) => product)
