@@ -3,8 +3,10 @@
 import { useRef, useEffect, useState, useCallback } from 'react'
 import { useChat } from '@ai-sdk/react'
 import { DefaultChatTransport } from 'ai'
-import { Send, ImagePlus, X, ShoppingBag, Loader2 } from 'lucide-react'
+import { Send, ImagePlus, X, ShoppingBag, Loader2, ShoppingCart } from 'lucide-react'
 import { MessageBubble } from './MessageBubble'
+import { CartPanel } from './CartPanel'
+import { useStore } from '@/lib/store'
 import { cn } from '@/lib/utils'
 
 const WELCOME_SUGGESTIONS = [
@@ -16,6 +18,8 @@ const WELCOME_SUGGESTIONS = [
 
 export function ChatInterface() {
   const [input, setInput] = useState('')
+  const [cartOpen, setCartOpen] = useState(false)
+  const { cartCount, savedCount } = useStore()
   const [pendingImage, setPendingImage] = useState<{
     dataUrl: string
     mimeType: string
@@ -116,6 +120,8 @@ export function ChatInterface() {
 
   return (
     <div className="flex flex-col h-full max-w-3xl mx-auto w-full">
+      <CartPanel open={cartOpen} onClose={() => setCartOpen(false)} />
+
       {/* Header */}
       <header className="flex items-center gap-3 px-4 py-3 bg-white border-b border-gray-200 shadow-sm">
         <div className="flex items-center justify-center w-9 h-9 bg-indigo-600 rounded-xl">
@@ -141,6 +147,20 @@ export function ChatInterface() {
           />
           {isLoading ? 'Thinking...' : 'Online'}
         </div>
+
+        {/* Cart / saved button */}
+        <button
+          onClick={() => setCartOpen(true)}
+          className="relative p-2 rounded-xl hover:bg-gray-100 text-gray-600 transition-colors"
+          aria-label="Open cart"
+        >
+          <ShoppingCart className="w-5 h-5" />
+          {(cartCount + savedCount) > 0 && (
+            <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 flex items-center justify-center bg-indigo-600 text-white text-[10px] font-bold rounded-full px-1">
+              {cartCount + savedCount}
+            </span>
+          )}
+        </button>
       </header>
 
       {/* Messages area */}

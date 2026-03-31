@@ -1,8 +1,9 @@
 'use client'
 
 import Image from 'next/image'
-import { ShoppingCart, Star, Package } from 'lucide-react'
+import { ShoppingCart, Star, Package, Heart } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { useStore } from '@/lib/store'
 
 export interface ProductCardProps {
   id: string
@@ -17,15 +18,11 @@ export interface ProductCardProps {
   rating: number
 }
 
-export function ProductCard({
-  name,
-  category,
-  price,
-  description,
-  imageUrl,
-  inStock,
-  rating,
-}: ProductCardProps) {
+export function ProductCard(props: ProductCardProps) {
+  const { name, category, price, description, imageUrl, inStock, rating } = props
+  const { addToCart, toggleSaved, isSaved } = useStore()
+  const saved = isSaved(props.id)
+
   return (
     <div className="flex flex-col bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden hover:shadow-md transition-shadow duration-200 w-52 flex-shrink-0">
       {/* Product image */}
@@ -45,6 +42,19 @@ export function ProductCard({
             </span>
           </div>
         )}
+        {/* Save / heart button */}
+        <button
+          onClick={() => toggleSaved(props)}
+          className={cn(
+            'absolute top-2 right-2 p-1.5 rounded-full backdrop-blur-sm transition-colors',
+            saved
+              ? 'bg-red-500 text-white'
+              : 'bg-white/80 text-gray-400 hover:text-red-500',
+          )}
+          aria-label={saved ? 'Remove from saved' : 'Save item'}
+        >
+          <Heart className={cn('w-3.5 h-3.5', saved && 'fill-current')} />
+        </button>
       </div>
 
       {/* Content */}
@@ -76,6 +86,7 @@ export function ProductCard({
             ${price.toFixed(2)}
           </span>
           <button
+            onClick={() => inStock && addToCart(props)}
             className={cn(
               'flex items-center gap-1 text-xs font-medium px-2.5 py-1.5 rounded-lg transition-colors',
               inStock
