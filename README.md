@@ -21,13 +21,13 @@ All search use cases are handled by a **single agent** with tool calling — no 
 
 ## Tech Stack & Decisions
 
-### Framework — Next.js 16 (App Router)
+### Framework — Next.js (App Router)
 
-Next.js 16 with the App Router provides a clean separation between the streaming AI backend (Route Handlers, Server Components) and the interactive React frontend (Client Components). Key reasons:
+Next.js with the App Router provides a clean separation between the streaming AI backend (Route Handlers, Server Components) and the interactive React frontend (Client Components). Key reasons:
 
 - **Route Handlers** give a simple, Node.js-native endpoint for streaming AI responses via Server-Sent Events, with no extra server infrastructure.
 - **Server Components by default** — catalog data and layout render on the server; only the interactive chat UI ships client-side JavaScript.
-- **Turbopack** (the default bundler in Next.js 16) provides near-instant HMR during development without configuration.
+- **Turbopack** (the default bundler) provides near-instant HMR during development without configuration.
 - **Zero-config Vercel deployment** — streaming, image optimization, and environment variables all work out of the box.
 
 ### AI Model — GPT-4o (OpenAI via Vercel AI SDK)
@@ -36,13 +36,14 @@ GPT-4o handles all three agent use cases in a single model call:
 
 - **Text understanding** — interprets natural-language shopping queries and maps them to the right catalog search tool.
 - **Structured tool calling** — reliably invokes `searchProductsByText`, `searchProductsByImage`, and `getProductDetails` with well-formed JSON arguments.
-- **Vision / multimodal input** — when a user uploads an image, GPT-4o analyses it and generates a detailed natural-language description (colour, style, material, category) passed to the same keyword-scoring search used for text queries.
+- **Vision / multimodal input** — when a user uploads an image, GPT-4o analyses it and generates a detailed natural-language description (colour, style, material, category) passed to the keyword-scoring search used for text queries.
 
 ### AI SDK — Vercel AI SDK v6
 
 - **`streamText` + `toUIMessageStreamResponse()`** handles SSE plumbing, delta chunking, and tool-call streaming.
 - **`useChat` with `DefaultChatTransport`** on the client manages message state, loading status, and file attachments.
 - **`convertToModelMessages()`** transforms `UIMessage` format (including file parts for image uploads) into the format the model expects.
+- **`FileUIPart`** — image uploads are constructed as explicit `FileUIPart` objects with base64 data URLs before being passed to `sendMessage`, ensuring the server always receives a resolvable URL.
 - **`inputSchema` / `output`** tool definitions are aligned with the MCP specification.
 - **`stopWhen: stepCountIs(5)`** prevents runaway multi-step loops while still allowing the agent to chain a search call with a detail lookup in a single turn.
 
@@ -77,10 +78,27 @@ Products are scored against tokenised query terms across weighted fields:
 
 **Relevance gating** uses two rules to prevent unrelated products from appearing:
 
-1. At least **one strong match** (name or tag level) is required — a product only mentioned in passing in a description is excluded.
-2. At least **50% of the meaningful query tokens** must match something — so "running shoes marathon" needs 2 of 3 tokens to match, filtering out products that only share one word like "running".
+1. At least **one strong match** (name or tag level) is required.
+2. At least **`minMatchRatio` × query tokens** must match something.
 
-Context words (e.g., "marathon") that don't exist in the catalog still boost the score of products that do match them, without blocking results when they're absent.
+The ratio differs by search mode:
+
+| Mode | `minMatchRatio` | Rationale |
+| --- | --- | --- |
+| Text search | `0.5` | User queries are short and precise — strict gating prevents noise. |
+| Image search | `0.2` | GPT-4o produces verbose descriptions (15–20 tokens) with many terms absent from the catalog (colours, brand names, materials). A 50% gate would incorrectly filter strong category matches, so a lower threshold is used while still requiring at least one strong name/tag hit. |
+
+### Image Upload Pipeline
+
+1. User selects an image via the upload button.
+2. `FileReader.readAsDataURL` converts it to a base64 data URL in the browser.
+3. A `FileUIPart` is constructed explicitly with `url: dataUrl` and passed to `sendMessage({ files: [filePart] })`.
+4. `DefaultChatTransport` serializes the messages (including the file part) as JSON and POSTs to `/api/chat`.
+5. The server sanitizes incoming messages — file parts are retained only in the most recent user message and only when they carry a valid `data:` URL (stale blob URLs from previous failed uploads are stripped, preventing them from poisoning future requests).
+6. `convertToModelMessages()` converts the `FileUIPart` into a model file part. A post-processing step extracts the raw base64 content from the data URL string, because `@ai-sdk/openai` prepends `data:${mediaType};base64,` itself — passing the full data URL would double-prefix it and make it unreadable to GPT-4o.
+7. GPT-4o analyses the image and calls `searchProductsByImage` with a detailed description (colour, style, material, category, intended use).
+8. `searchByImage` runs keyword-scoring + relevance-gating with the lenient 20% threshold.
+9. Matching products are returned as structured JSON and rendered as `ProductCard` components.
 
 ### Cart & Wishlist — React Context + localStorage
 
@@ -115,17 +133,26 @@ User
  ▼
 ChatInterface (React, client)
  │  useChat → DefaultChatTransport
+ │  FileUIPart (base64 data URL) constructed before sendMessage
  │  StoreProvider (cart + wishlist state)
  ▼
 POST /api/chat  (Next.js Route Handler, Node.js runtime)
  │
+ ├─ Sanitize messages: strip stale file parts from history,
+ │  keep only data: URLs in the current user message
+ │
+ ├─ convertToModelMessages() → post-process to strip data URL prefix
+ │  (workaround for AI SDK v6 double-prefix bug in @ai-sdk/openai)
+ │
  ├─ streamText(gpt-4o, system prompt, tools)
  │
  ├─ Tool: searchProductsByText(query)
- │    └─ catalog.ts → stop-word filter → keyword scoring → relevance gating → top 5
+ │    └─ catalog.ts → stop-word filter → keyword scoring
+ │       → relevance gating (50% token match) → top 5
  │
  ├─ Tool: searchProductsByImage(imageDescription)
- │    └─ GPT-4o vision describes the image → same keyword search
+ │    └─ GPT-4o vision describes image → same keyword search
+ │       → lenient gating (20% token match) → top 5
  │
  └─ Tool: getProductDetails(productId)
       └─ exact lookup by ID
@@ -136,24 +163,15 @@ toUIMessageStreamResponse()  →  streamed back to client
  ▼
 MessageBubble renders:
   • text parts  → Markdown via react-markdown
+  • file parts  → image thumbnail (base64 data URL preview)
   • tool parts  → ProductCard grid (horizontal scroll)
                → each card: Add to Cart button + Heart/Save toggle
-  • file parts  → image upload confirmation badge
  │
  ▼
 CartPanel (slide-out drawer)
   • Cart tab  → quantity controls, remove, total, checkout
   • Saved tab → add to cart from saved, remove
 ```
-
-### How image search works
-
-1. User selects an image via the upload button.
-2. The browser reads it with `FileReader`; the AI SDK sends it as a `file` part in the `UIMessage`.
-3. `convertToModelMessages()` transforms the file part into GPT-4o's native vision format (base64 image block).
-4. GPT-4o analyses the image and calls `searchProductsByImage` with a detailed description (colour, style, material, category, intended use).
-5. `searchByImage` runs the same keyword-scoring + relevance-gating algorithm as text search.
-6. Matching products are returned as structured JSON and rendered as `ProductCard` components.
 
 ---
 
@@ -163,6 +181,7 @@ CartPanel (slide-out drawer)
 ai-commerce-agent/
 ├── app/
 │   ├── api/chat/route.ts       # Streaming agent endpoint (streamText + tools)
+│   │                           # Includes message sanitization and base64 fix
 │   ├── layout.tsx              # Root layout — wraps with StoreProvider
 │   ├── page.tsx
 │   └── globals.css
@@ -170,12 +189,14 @@ ai-commerce-agent/
 │   └── chat/
 │       ├── CartPanel.tsx       # Slide-out drawer (Cart + Saved tabs)
 │       ├── ChatInterface.tsx   # Chat UI — useChat, header badge, image upload
-│       ├── MessageBubble.tsx   # Renders text (Markdown) + tool results + file parts
+│       │                       # Builds FileUIPart with data URL before sendMessage
+│       ├── MessageBubble.tsx   # Renders text (Markdown) + tool results + image thumbnails
 │       └── ProductCard.tsx     # Product card — Add to Cart + Heart/Save buttons
 ├── data/
 │   └── catalog.json            # 20-product catalog (electronics, clothing, sports, home)
 ├── lib/
-│   ├── catalog.ts              # Keyword-scoring search with stop-word filter + relevance gating
+│   ├── catalog.ts              # Keyword-scoring search — minMatchRatio param
+│   │                           # searchByText (0.5) vs searchByImage (0.2)
 │   ├── store.tsx               # Cart & wishlist context with localStorage persistence
 │   └── utils.ts                # cn() Tailwind helper
 ├── .env.example
@@ -264,6 +285,8 @@ curl -X POST http://localhost:3000/api/chat \
 | Home | Cordless Vacuum, Pressure Cooker, Smart Bulb Kit, Coffee Machine, Foam Mattress |
 
 Each product has: `id`, `name`, `category`, `subcategory`, `price`, `description`, `tags[]`, `imageUrl`, `inStock`, `rating`.
+
+Product IDs follow the pattern `{category-prefix}-{number}`, e.g. `elec-001`, `cloth-002`, `sport-003`, `home-004`.
 
 ---
 

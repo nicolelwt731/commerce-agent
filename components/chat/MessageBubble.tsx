@@ -74,14 +74,26 @@ export function MessageBubble({ message }: MessageBubbleProps) {
 
           // --- File parts (image uploads shown on user side) ---
           if (part.type === 'file' && isUser) {
-            const isImage = (part as { type: 'file'; mimeType?: string }).mimeType?.startsWith('image/')
+            const filePart = part as { type: 'file'; mediaType?: string; url?: string }
+            const isImage = filePart.mediaType?.startsWith('image/')
+            if (isImage && filePart.url) {
+              return (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  key={index}
+                  src={filePart.url}
+                  alt="Uploaded for visual search"
+                  className="max-w-[200px] max-h-[200px] rounded-xl border border-indigo-200 object-cover"
+                />
+              )
+            }
             return (
               <div
                 key={index}
                 className="px-3 py-2 bg-indigo-100 border border-indigo-200 rounded-xl text-xs text-indigo-700 flex items-center gap-2"
               >
-                <span className="text-base">{isImage ? '🖼️' : '📎'}</span>
-                <span>{isImage ? 'Image uploaded for visual search' : 'File attached'}</span>
+                <span className="text-base">📎</span>
+                <span>File attached</span>
               </div>
             )
           }

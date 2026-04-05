@@ -2,7 +2,7 @@
 
 import { useRef, useEffect, useState, useCallback } from 'react'
 import { useChat } from '@ai-sdk/react'
-import { DefaultChatTransport } from 'ai'
+import { DefaultChatTransport, type FileUIPart } from 'ai'
 import { Send, ImagePlus, X, ShoppingBag, Loader2, ShoppingCart } from 'lucide-react'
 import { MessageBubble } from './MessageBubble'
 import { CartPanel } from './CartPanel'
@@ -82,12 +82,19 @@ export function ChatInterface() {
       if (isLoading) return
 
       if (pendingImage) {
-        // Use DataTransfer to build a proper FileList for the AI SDK
-        const dt = new DataTransfer()
-        dt.items.add(pendingImage.file)
+        // Build a FileUIPart directly from the data URL we already have.
+        // This avoids relying on the SDK to re-read the File object, which
+        // can result in a blob URL being sent to the server instead of a
+        // base64 data URL that convertToModelMessages can resolve.
+        const filePart: FileUIPart = {
+          type: 'file',
+          url: pendingImage.dataUrl,
+          mediaType: pendingImage.mimeType,
+          filename: pendingImage.fileName,
+        }
         sendMessage({
           text: trimmed || 'Find products similar to this image.',
-          files: dt.files,
+          files: [filePart],
         })
         setPendingImage(null)
       } else {

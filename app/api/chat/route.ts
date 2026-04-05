@@ -29,12 +29,83 @@ Store information:
 - Products marked "inStock: false" are currently unavailable.`
 
 export async function POST(req: Request) {
-  const { messages }: { messages: UIMessage[] } = await req.json()
+  let body: { messages: UIMessage[] }
+  try {
+    body = await req.json()
+  } catch (err) {
+    console.error('[chat] failed to parse request body:', err)
+    return new Response(JSON.stringify({ error: 'Invalid JSON body' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    })
+  }
+
+  const { messages } = body
+
+  // Sanitize messages before conversion:
+  // - Strip file parts from every message except the most recent user message
+  //   (old image context is not needed and stale blob URLs break the pipeline).
+  // - In the most recent user message, keep only file parts with a valid data URL
+  //   (blob:// URLs are browser-only and cannot be resolved on the server).
+  const lastUserIndex = messages.reduce(
+    (last, msg, i) => (msg.role === 'user' ? i : last),
+    -1,
+  )
+  const sanitized = messages.map((msg, i) => {
+    const parts = msg.parts ?? []
+    if (i === lastUserIndex) {
+      return {
+        ...msg,
+        parts: parts.filter(part => {
+          if (part.type !== 'file') return true
+          const fp = part as { url?: string }
+          return typeof fp.url === 'string' && fp.url.startsWith('data:')
+        }),
+      }
+    }
+    return { ...msg, parts: parts.filter(part => part.type !== 'file') }
+  }) as UIMessage[]
+
+  let modelMessages
+  try {
+    modelMessages = await convertToModelMessages(sanitized)
+  } catch (err) {
+    console.error('[chat] convertToModelMessages failed:', err)
+    return new Response(JSON.stringify({ error: String(err) }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' },
+    })
+  }
+
+  // Workaround: convertToModelMessages sets data = FileUIPart.url (a full data URL
+  // string like "data:image/jpeg;base64,/9j/..."). But @ai-sdk/openai expects data
+  // to be the raw base64 content — it prepends "data:${mediaType};base64," itself.
+  // Without this fix the payload sent to GPT-4o is a double-prefixed data URL which
+  // it cannot decode, causing the "image didn't come through" response.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const fixedModelMessages = modelMessages.map((msg: any) => {
+    if (msg.role !== 'user' || !Array.isArray(msg.content)) return msg
+    return {
+      ...msg,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      content: msg.content.map((part: any) => {
+        if (
+          part.type === 'file' &&
+          typeof part.data === 'string' &&
+          part.data.startsWith('data:')
+        ) {
+          const base64 = part.data.split(',')[1]
+          return base64 ? { ...part, data: base64 } : part
+        }
+        return part
+      }),
+    }
+  })
 
   const result = streamText({
     model: openai('gpt-4o'),
     system: SYSTEM_PROMPT,
-    messages: await convertToModelMessages(messages),
+    messages: fixedModelMessages,
     stopWhen: stepCountIs(5),
     tools: {
       searchProductsByText: tool({

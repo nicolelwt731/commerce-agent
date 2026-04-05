@@ -88,15 +88,15 @@ function scoreProduct(product: Product, tokens: string[]): ScoreResult {
  *
  * Filtering rules:
  * - Must have at least 1 strong match (name or tag level).
- * - Must match at least ceil(tokens * 0.5) tokens overall.
- *   e.g. "running shoes marathon" (3 tokens) → need 2/3 to match anything,
- *   so shoes that match "running" + "shoes" pass even if "marathon" is absent.
+ * - Must match at least ceil(tokens * minMatchRatio) tokens overall.
+ *   Default ratio 0.5: "running shoes marathon" needs 2/3 tokens to match,
+ *   so shoes matching "running" + "shoes" pass even if "marathon" is absent.
  */
-export function searchByText(query: string, limit = 5): Product[] {
+export function searchByText(query: string, limit = 5, minMatchRatio = 0.5): Product[] {
   const tokens = tokenise(query)
   if (tokens.length === 0) return catalog.slice(0, limit)
 
-  const requiredMatches = Math.ceil(tokens.length * 0.5)
+  const requiredMatches = Math.ceil(tokens.length * minMatchRatio)
 
   const scored = catalog
     .map((product) => ({ product, ...scoreProduct(product, tokens) }))
@@ -110,12 +110,13 @@ export function searchByText(query: string, limit = 5): Product[] {
 
 /**
  * Search the product catalog using attributes extracted from an image description.
- * The imageDescription should be a natural-language description of the visual
- * attributes seen in the uploaded image (colours, style, material, category, etc.).
+ * Uses a lower minMatchRatio (0.2) because GPT-4o produces verbose descriptions
+ * with many tokens that don't exist in the catalog (colours, brand names, materials,
+ * etc.), so requiring 50% would incorrectly filter out strong category matches.
+ * A product still needs at least 1 strong name/tag match to appear.
  */
 export function searchByImage(imageDescription: string, limit = 5): Product[] {
-  // Re-use the text search on the extracted description
-  return searchByText(imageDescription, limit)
+  return searchByText(imageDescription, limit, 0.2)
 }
 
 /**
