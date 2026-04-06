@@ -1,7 +1,7 @@
 import { openai } from '@ai-sdk/openai'
 import { streamText, tool, stepCountIs, UIMessage, convertToModelMessages } from 'ai'
 import { z } from 'zod'
-import { searchByText, searchByImage, getProductById } from '@/lib/catalog'
+import { searchByVector, getProductById } from '@/lib/catalog'
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
@@ -28,8 +28,36 @@ Store information:
 - All prices are in USD.
 - Products marked "inStock: false" are currently unavailable.`
 
+interface UserContext {
+  name: string
+  preferences: string[]
+}
+
+function buildSystemPrompt(userContext?: UserContext): string {
+  if (!userContext) return SYSTEM_PROMPT
+
+  const lines = [
+    SYSTEM_PROMPT,
+    '',
+    '## Personalisation',
+    `The signed-in user's name is ${userContext.name}. Address them by name naturally in your responses — at least once per reply, but not in every sentence.`,
+  ]
+
+  if (userContext.preferences.length > 0) {
+    lines.push(
+      `They have shown interest in: ${userContext.preferences.join(', ')} (inferred from their cart and saved items).`,
+      'Proactively connect these interests to your recommendations. For example, if they ask about electronics and they follow running, highlight sport-relevant electronics.',
+      `When starting the conversation, greet them as ${userContext.name} and acknowledge what you know about their taste in one sentence.`,
+    )
+  } else {
+    lines.push(`Greet them as ${userContext.name} when starting the conversation.`)
+  }
+
+  return lines.join('\n')
+}
+
 export async function POST(req: Request) {
-  let body: { messages: UIMessage[] }
+  let body: { messages: UIMessage[]; userContext?: UserContext }
   try {
     body = await req.json()
   } catch (err) {
@@ -40,7 +68,7 @@ export async function POST(req: Request) {
     })
   }
 
-  const { messages } = body
+  const { messages, userContext } = body
 
   // Sanitize messages before conversion:
   // - Strip file parts from every message except the most recent user message
@@ -104,7 +132,7 @@ export async function POST(req: Request) {
 
   const result = streamText({
     model: openai('gpt-4o'),
-    system: SYSTEM_PROMPT,
+    system: buildSystemPrompt(userContext),
     messages: fixedModelMessages,
     stopWhen: stepCountIs(5),
     tools: {
@@ -119,7 +147,7 @@ export async function POST(req: Request) {
             ),
         }),
         execute: async ({ query }) => {
-          const products = searchByText(query)
+          const products = await searchByVector(query)
           if (products.length === 0) {
             return {
               found: false,
@@ -147,7 +175,7 @@ export async function POST(req: Request) {
             ),
         }),
         execute: async ({ imageDescription }) => {
-          const products = searchByImage(imageDescription)
+          const products = await searchByVector(imageDescription)
           if (products.length === 0) {
             return {
               found: false,

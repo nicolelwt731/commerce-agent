@@ -1,8 +1,9 @@
 'use client'
 
-import { useRef, useEffect, useState, useCallback } from 'react'
+import { useRef, useEffect, useState, useCallback, useMemo } from 'react'
 import { useChat } from '@ai-sdk/react'
 import { DefaultChatTransport, type FileUIPart } from 'ai'
+import { useUser, SignInButton, UserButton } from '@clerk/nextjs'
 import { Send, ImagePlus, X, ShoppingBag, Loader2, ShoppingCart } from 'lucide-react'
 import { MessageBubble } from './MessageBubble'
 import { CartPanel } from './CartPanel'
@@ -19,7 +20,8 @@ const WELCOME_SUGGESTIONS = [
 export function ChatInterface() {
   const [input, setInput] = useState('')
   const [cartOpen, setCartOpen] = useState(false)
-  const { cartCount, savedCount } = useStore()
+  const { cartCount, savedCount, cart, saved } = useStore()
+  const { user, isSignedIn } = useUser()
   const [pendingImage, setPendingImage] = useState<{
     dataUrl: string
     mimeType: string
@@ -27,13 +29,47 @@ export function ChatInterface() {
     file: File
   } | null>(null)
 
+  // Derive interest tags from cart + saved for personalisation
+  const userContext = useMemo(() => {
+    if (!isSignedIn || !user) return null
+    const items = [...cart, ...saved]
+    const preferences = [
+      ...new Set(items.flatMap((i) => [i.category, i.subcategory])),
+    ].slice(0, 6)
+    return {
+      name: user.firstName ?? user.username ?? 'there',
+      preferences,
+    }
+  }, [isSignedIn, user, cart, saved])
+
+  // Keep a ref so the custom fetch always reads the latest context
+  // without re-creating the transport (which would reset chat state)
+  const userContextRef = useRef(userContext)
+  useEffect(() => { userContextRef.current = userContext }, [userContext])
+
   const fileInputRef = useRef<HTMLInputElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
-  const { messages, sendMessage, status } = useChat({
-    transport: new DefaultChatTransport({ api: '/api/chat' }),
-  })
+  const transport = useMemo(
+    () =>
+      new DefaultChatTransport({
+        api: '/api/chat',
+        fetch: (url, init) => {
+          const body = JSON.parse((init?.body as string) ?? '{}')
+          return fetch(url, {
+            ...init,
+            body: JSON.stringify({
+              ...body,
+              ...(userContextRef.current ? { userContext: userContextRef.current } : {}),
+            }),
+          })
+        },
+      }),
+    [], // created once — reads latest context via ref at request time
+  )
+
+  const { messages, sendMessage, status } = useChat({ transport })
 
   const isLoading = status === 'submitted' || status === 'streaming'
 
@@ -136,7 +172,11 @@ export function ChatInterface() {
         </div>
         <div>
           <h1 className="text-base font-semibold text-gray-900">ShopBot</h1>
-          <p className="text-xs text-gray-400">AI Commerce Assistant</p>
+          <p className="text-xs text-gray-400">
+            {userContext
+              ? `Personalised for ${userContext.name}`
+              : 'AI Commerce Assistant'}
+          </p>
         </div>
         <div
           className={cn(
@@ -154,6 +194,17 @@ export function ChatInterface() {
           />
           {isLoading ? 'Thinking...' : 'Online'}
         </div>
+
+        {/* Auth */}
+        {isSignedIn ? (
+          <UserButton />
+        ) : (
+          <SignInButton mode="modal">
+            <button className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-xl border border-gray-200 hover:bg-gray-50 text-gray-600 transition-colors">
+              Sign in
+            </button>
+          </SignInButton>
+        )}
 
         {/* Cart / saved button */}
         <button

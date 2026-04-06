@@ -1,3 +1,5 @@
+import { embed, embedMany } from 'ai'
+import { openai } from '@ai-sdk/openai'
 import catalogData from '@/data/catalog.json'
 
 export interface Product {
@@ -14,6 +16,61 @@ export interface Product {
 }
 
 const catalog: Product[] = catalogData as Product[]
+
+// ─── Vector Search ─────────────────────────────────────────────────────────
+
+let _catalogEmbeddings: number[][] | null = null
+
+/** Lazily compute and cache embeddings for all products (one API call). */
+async function getCatalogEmbeddings(): Promise<number[][]> {
+  if (_catalogEmbeddings) return _catalogEmbeddings
+  const texts = catalog.map(
+    (p) =>
+      `${p.name} ${p.category} ${p.subcategory} ${p.tags.join(' ')} ${p.description}`,
+  )
+  const { embeddings } = await embedMany({
+    model: openai.embedding('text-embedding-3-small'),
+    values: texts,
+  })
+  _catalogEmbeddings = embeddings
+  return embeddings
+}
+
+function cosineSimilarity(a: number[], b: number[]): number {
+  let dot = 0, normA = 0, normB = 0
+  for (let i = 0; i < a.length; i++) {
+    dot += a[i] * b[i]
+    normA += a[i] * a[i]
+    normB += b[i] * b[i]
+  }
+  return dot / (Math.sqrt(normA) * Math.sqrt(normB))
+}
+
+/**
+ * Semantic search using text-embedding-3-small cosine similarity.
+ * Falls back to keyword search if the embedding call fails.
+ */
+export async function searchByVector(query: string, limit = 5): Promise<Product[]> {
+  try {
+    const [{ embedding: queryEmbedding }, productEmbeddings] = await Promise.all([
+      embed({ model: openai.embedding('text-embedding-3-small'), value: query }),
+      getCatalogEmbeddings(),
+    ])
+    return catalog
+      .map((product, i) => ({
+        product,
+        score: cosineSimilarity(queryEmbedding, productEmbeddings[i]),
+      }))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, limit)
+      .map(({ product }) => product)
+  } catch (err) {
+    console.error('[searchByVector] embedding failed, falling back to keyword search:', err)
+    return searchByText(query, limit)
+  }
+}
+
+// ─── Keyword Search (kept as fallback) ────────────────────────────────────
 
 const STOP_WORDS = new Set([
   'a', 'an', 'the', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for',

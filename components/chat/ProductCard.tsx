@@ -18,6 +18,28 @@ export interface ProductCardProps {
   rating: number
 }
 
+export function ProductCardSkeleton() {
+  return (
+    <div className="flex flex-col bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden w-52 flex-shrink-0 animate-pulse">
+      <div className="w-full h-40 bg-gray-200" />
+      <div className="flex flex-col gap-2 p-3">
+        <div className="h-3 bg-gray-200 rounded w-16" />
+        <div className="h-4 bg-gray-200 rounded w-full" />
+        <div className="h-3 bg-gray-200 rounded w-4/5" />
+        <div className="h-3 bg-gray-200 rounded w-3/5" />
+        <div className="flex items-center gap-1 mt-1">
+          <div className="h-3 w-3 bg-gray-200 rounded-full" />
+          <div className="h-3 bg-gray-200 rounded w-6" />
+        </div>
+        <div className="flex items-center justify-between mt-auto pt-2 border-t border-gray-100">
+          <div className="h-4 bg-gray-200 rounded w-12" />
+          <div className="h-7 bg-gray-200 rounded w-14" />
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export function ProductCard(props: ProductCardProps) {
   const { name, category, price, description, imageUrl, inStock, rating } = props
   const { addToCart, toggleSaved, isSaved } = useStore()

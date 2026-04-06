@@ -3,7 +3,7 @@
 import { UIMessage } from 'ai'
 import { Bot, User } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
-import { ProductCard, ProductCardProps } from './ProductCard'
+import { ProductCard, ProductCardSkeleton, ProductCardProps } from './ProductCard'
 import { cn } from '@/lib/utils'
 
 interface MessageBubbleProps {
@@ -125,17 +125,36 @@ export function MessageBubble({ message }: MessageBubbleProps) {
               toolPart.state === 'input-streaming' ||
               toolPart.state === 'input-available'
             ) {
+              const isSearchTool =
+                toolName === 'searchProductsByText' ||
+                toolName === 'searchProductsByImage'
+
+              if (isSearchTool) {
+                return (
+                  <div key={index} className="flex flex-col gap-2 w-full">
+                    <p className="text-xs text-gray-400 font-medium uppercase tracking-wide flex items-center gap-1.5">
+                      <span className="inline-block w-3 h-3 border border-gray-400 border-t-transparent rounded-full animate-spin" />
+                      {toolName === 'searchProductsByImage'
+                        ? 'Analysing image & searching...'
+                        : 'Searching catalog...'}
+                    </p>
+                    <div className="flex gap-3 overflow-x-auto pb-2 chat-scroll">
+                      <ProductCardSkeleton />
+                      <ProductCardSkeleton />
+                      <ProductCardSkeleton />
+                    </div>
+                  </div>
+                )
+              }
+
               return (
                 <div
                   key={index}
                   className="px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-xs text-gray-500 flex items-center gap-2"
                 >
                   <span className="animate-spin inline-block w-3 h-3 border border-gray-400 border-t-transparent rounded-full" />
-                  {toolName === 'searchProductsByText' && 'Searching catalog...'}
-                  {toolName === 'searchProductsByImage' && 'Analysing image & searching catalog...'}
                   {toolName === 'getProductDetails' && 'Fetching product details...'}
-                  {!['searchProductsByText', 'searchProductsByImage', 'getProductDetails'].includes(toolName) &&
-                    `Running ${toolName}...`}
+                  {toolName !== 'getProductDetails' && `Running ${toolName}...`}
                 </div>
               )
             }
