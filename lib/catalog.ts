@@ -46,27 +46,48 @@ function cosineSimilarity(a: number[], b: number[]): number {
   return dot / (Math.sqrt(normA) * Math.sqrt(normB))
 }
 
+export type ProductCategory = 'electronics' | 'clothing' | 'sports' | 'home'
+
+export interface SearchFilters {
+  maxPrice?: number
+  minPrice?: number
+  category?: ProductCategory
+}
+
 /**
  * Semantic search using text-embedding-3-small cosine similarity.
  * Falls back to keyword search if the embedding call fails.
+ * Price filters are applied before returning results.
  */
-export async function searchByVector(query: string, limit = 5): Promise<Product[]> {
+export async function searchByVector(query: string, limit = 5, filters: SearchFilters = {}): Promise<Product[]> {
+  const { maxPrice, minPrice, category } = filters
+  const pool = catalog.filter(p =>
+    (category === undefined || p.category === category) &&
+    (maxPrice === undefined || p.price <= maxPrice) &&
+    (minPrice === undefined || p.price >= minPrice)
+  )
+
   try {
-    const [{ embedding: queryEmbedding }, productEmbeddings] = await Promise.all([
-      embed({ model: openai.embedding('text-embedding-3-small'), value: query }),
-      getCatalogEmbeddings(),
-    ])
-    return catalog
-      .map((product, i) => ({
+    const allEmbeddings = await getCatalogEmbeddings()
+    const { embedding: queryEmbedding } = await embed({
+      model: openai.embedding('text-embedding-3-small'),
+      value: query,
+    })
+    return pool
+      .map((product) => ({
         product,
-        score: cosineSimilarity(queryEmbedding, productEmbeddings[i]),
+        score: cosineSimilarity(queryEmbedding, allEmbeddings[catalog.indexOf(product)]),
       }))
       .sort((a, b) => b.score - a.score)
       .slice(0, limit)
       .map(({ product }) => product)
   } catch (err) {
     console.error('[searchByVector] embedding failed, falling back to keyword search:', err)
-    return searchByText(query, limit)
+    return searchByText(query, limit).filter(p =>
+      (category === undefined || p.category === category) &&
+      (maxPrice === undefined || p.price <= maxPrice) &&
+      (minPrice === undefined || p.price >= minPrice)
+    )
   }
 }
 

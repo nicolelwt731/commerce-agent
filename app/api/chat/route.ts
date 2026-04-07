@@ -1,7 +1,7 @@
 import { openai } from '@ai-sdk/openai'
 import { streamText, tool, stepCountIs, UIMessage, convertToModelMessages } from 'ai'
 import { z } from 'zod'
-import { searchByVector, getProductById } from '@/lib/catalog'
+import { searchByVector, getProductById, type SearchFilters, type ProductCategory } from '@/lib/catalog'
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
@@ -145,13 +145,25 @@ export async function POST(req: Request) {
             .describe(
               'The search query describing what the user wants. Include category, style, use case, and any specific attributes mentioned.',
             ),
+          maxPrice: z
+            .number()
+            .optional()
+            .describe('Maximum price in USD. Extract from phrases like "under $100", "less than $50", "budget under $200".'),
+          minPrice: z
+            .number()
+            .optional()
+            .describe('Minimum price in USD. Extract from phrases like "over $50", "at least $100".'),
         }),
-        execute: async ({ query }) => {
-          const products = await searchByVector(query)
+        execute: async ({ query, maxPrice, minPrice }) => {
+          const filters: SearchFilters = {}
+          if (maxPrice !== undefined) filters.maxPrice = maxPrice
+          if (minPrice !== undefined) filters.minPrice = minPrice
+          const products = await searchByVector(query, 5, filters)
           if (products.length === 0) {
+            const priceNote = maxPrice !== undefined ? ` under $${maxPrice}` : minPrice !== undefined ? ` over $${minPrice}` : ''
             return {
               found: false,
-              message: `No products found for "${query}". Try a different search term.`,
+              message: `No products found for "${query}"${priceNote}. Try a different search term or adjust your budget.`,
               products: [],
             }
           }
@@ -166,16 +178,22 @@ export async function POST(req: Request) {
 
       searchProductsByImage: tool({
         description:
-          'Search the product catalog based on attributes extracted from an uploaded image. Use this when the user uploads a photo and wants to find similar products. Pass a detailed natural-language description of the visual attributes you observe in the image.',
+          'Search the product catalog based on attributes extracted from an uploaded image. Use this when the user uploads a photo and wants to find similar products.',
         inputSchema: z.object({
           imageDescription: z
             .string()
             .describe(
-              'A detailed description of the product or item visible in the image. Include: product category (clothing, electronics, etc.), subcategory, colours, style, material, brand if visible, intended use, and any other distinguishing visual attributes.',
+              'A concise, product-type-first description of what is physically visible in the image. Lead with the exact product type (e.g. "true wireless earbuds with charging case", "over-ear headphones", "mechanical keyboard"). Then add: colour, material, brand if visible, size/form factor, and any distinguishing hardware features. Do NOT include inferred use cases or lifestyle contexts.',
+            ),
+          category: z
+            .enum(['electronics', 'clothing', 'sports', 'home'])
+            .describe(
+              'The product category you can definitively identify from the image. electronics = devices, gadgets, audio gear, computers. clothing = apparel, shoes, accessories. sports = sports equipment, balls, fitness gear. home = furniture, appliances, kitchen items. Only set this if you are certain — it hard-filters results to this category.',
             ),
         }),
-        execute: async ({ imageDescription }) => {
-          const products = await searchByVector(imageDescription)
+        execute: async ({ imageDescription, category }) => {
+          const filters: SearchFilters = { category: category as ProductCategory }
+          const products = await searchByVector(imageDescription, 5, filters)
           if (products.length === 0) {
             return {
               found: false,
